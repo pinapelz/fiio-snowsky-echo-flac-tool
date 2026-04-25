@@ -97,22 +97,35 @@ def resize_album_art(path: Path) -> None:
     audio.save()
 
 
+def sanitize_filename(name: str) -> str:
+    illegal = r'\/:*?"<>|'
+    return "".join(c for c in name if c not in illegal).strip()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("base_dir", type=Path)
     parser.add_argument("--nolrc", "-n", action="store_true", dest="nolrc")
+
     args = parser.parse_args()
 
     base = args.base_dir
+
     files = [p for p in iter_files(base) if p.suffix == ".flac"]
 
     for fp in tqdm(files, desc="Processing FLAC files", unit="file"):
         print(f"\nProcessing: {fp.name}")
         title, artist = get_track_info(fp)
 
-        new_file_name = title + ".flac"
-        rename_file(fp, new_file_name)
-        fp = fp.with_name(new_file_name)
+        if not title:
+            print(f"  Warning: TITLE tag is empty, using filename as title")
+            title = fp.stem
+            artist = "UNKNOWN ARTIST"
+
+        new_file_name = sanitize_filename(f"{title} - {artist}") + ".flac"
+        if new_file_name != fp.name:
+            rename_file(fp, new_file_name)
+            fp = fp.with_name(new_file_name)
 
         issues = get_audio_issues(fp)
         print(f"  Stats: {issues['sample_rate']}Hz, {issues['bits_per_sample']}-bit, blocksize={issues['max_blocksize']}")
@@ -138,6 +151,10 @@ def main():
         resize_album_art(fp)
 
         if args.nolrc:
+            continue
+
+        if not title or not artist:
+            print(f"  Skipping LRC for {fp.name} (missing title or artist tag)")
             continue
 
         lrc_path = fp.with_suffix(".lrc")

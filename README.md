@@ -5,7 +5,7 @@ The script does the following:
 - Recursively searches through the provided directory
 - Re-samples audio higher than 192Khz 24bit via ffmpeg
 - Re-encodes files with block size higher than 4096 via `flac` CLI
-- Rename FLAC file to `TRACK_NAME.flac`
+- Rename FLAC file to `TRACK_NAME - ARTIST.flac`
 - Resize album art to 500x500px
 - Download LRC file
 
