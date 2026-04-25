@@ -1,0 +1,12 @@
+[project]
+name = "fiio-snowsky-flac-media"
+version = "0.1.0"
+description = "Media tool for retagging FLACs for Snowsky Echo/Mini"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "mutagen>=1.47.0",
+    "pillow>=12.2.0",
+    "syncedlyrics>=1.0.1",
+    "tqdm>=4.67.3",
+]
