@@ -1,11 +1,16 @@
 import argparse
 import subprocess
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Iterator
 from tqdm import tqdm
 import syncedlyrics
 from mutagen.flac import FLAC
 import ffmpeg
+
+_lyrics_semaphore = threading.Semaphore(1)
 
 
 def iter_files(base: Path) -> Iterator[Path]:
@@ -78,7 +83,8 @@ def get_track_info(path: Path) -> tuple:
     audio = FLAC(str(path))
     title = audio.get("TITLE", [""])
     artist = audio.get("ARTIST", [""])
-    return (title[0], artist[0])
+    album = audio.get("ALBUM", [""])
+    return (title[0], artist[0], album[0])
 
 
 def resize_album_art(path: Path) -> None:
@@ -97,76 +103,125 @@ def resize_album_art(path: Path) -> None:
     audio.save()
 
 
+def normalize_loudness(path: Path, target_lufs: float = -14.0, target_tp: float = -1.0) -> Path:
+    temp_path = path.with_suffix(".tmp.flac")
+    subprocess.run(
+        [
+            "ffmpeg-normalize", str(path),
+            "-o", str(temp_path),
+            "-c:a", "flac",
+            "-t", str(target_lufs),
+            "--true-peak", str(target_tp),
+            "-f",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    path.unlink()
+    temp_path.rename(path)
+    return path
+
+
 def sanitize_filename(name: str) -> str:
     illegal = r'\/:*?"<>|'
     return "".join(c for c in name if c not in illegal).strip()
 
 
+def process_file(fp: Path, nolrc: bool) -> str:
+    lines = []
+    log = lines.append
+
+    log(f"\nProcessing: {fp.name}")
+    title, artist, album = get_track_info(fp)
+
+    if not title:
+        log(f"  Warning: TITLE tag is empty, using filename as title")
+        title = fp.stem
+        artist = "UNKNOWN ARTIST"
+
+    new_stem = sanitize_filename(f"{title} - {artist}")
+    target = fp.with_name(new_stem + ".flac")
+    if target.exists() and target.resolve() != fp.resolve():
+        if album:
+            log(f"  Conflict detected, adding album name as differentiator")
+            new_stem = sanitize_filename(f"{title} - {artist} ({album})")
+        else:
+            log(f"  Warning: filename conflict but no album tag, keeping original name")
+            new_stem = fp.stem
+    new_file_name = new_stem + ".flac"
+    if new_file_name != fp.name:
+        rename_file(fp, new_file_name)
+        fp = fp.with_name(new_file_name)
+
+    issues = get_audio_issues(fp)
+    log(f"  Stats: {issues['sample_rate']}Hz, {issues['bits_per_sample']}-bit, blocksize={issues['max_blocksize']}")
+
+    if issues["needs_sample_rate_fix"] or issues["needs_bitdepth_fix"]:
+        reasons = []
+        if issues["needs_sample_rate_fix"]:
+            reasons.append(f"sample rate {issues['sample_rate']}Hz -> 192000Hz")
+        if issues["needs_bitdepth_fix"]:
+            reasons.append(f"bit depth {issues['bits_per_sample']}-bit -> 24-bit")
+        log(f"  Fixing via ffmpeg: {', '.join(reasons)}")
+        fp = fix_with_ffmpeg(fp, issues["needs_sample_rate_fix"], issues["needs_bitdepth_fix"])
+
+    log("  Normalizing loudness to -14 LUFS")
+    fp = normalize_loudness(fp)
+
+    post_blocksize = getattr(FLAC(str(fp)).info, "max_blocksize", 4096)
+    if post_blocksize != 4096:
+        log(f"  Fixing blocksize -> 4096 via flac CLI")
+        fp = fix_blocksize(fp)
+
+    log("  Resizing album art to 500x500")
+    resize_album_art(fp)
+
+    if nolrc:
+        return "\n".join(lines)
+
+    if not title or not artist:
+        log(f"  Skipping LRC for {fp.name} (missing title or artist tag)")
+        return "\n".join(lines)
+
+    lrc_path = fp.with_suffix(".lrc")
+    if lrc_path.exists():
+        log(f"  Skipping LRC for {fp.name} (already exists)")
+        return "\n".join(lines)
+
+    log(f"  Fetching LRC for: {title} - {artist}")
+    with _lyrics_semaphore:
+        lrc = syncedlyrics.search(f"{title} {artist}", providers=["Lrclib", "Megalobiz", "NetEase"])
+        time.sleep(0.5)
+
+    with open(lrc_path, "w", encoding="utf-8") as f:
+        f.write(lrc if lrc else "")
+
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("base_dir", type=Path)
-    parser.add_argument("--nolrc", "-n", action="store_true", dest="nolrc")
-
+    parser.add_argument("--nolrc", action="store_true", dest="nolrc")
+    parser.add_argument("-n", "--workers", type=int, default=1, dest="workers",
+                        help="Number of parallel workers (default: 1)")
     args = parser.parse_args()
 
-    base = args.base_dir
+    files = [p for p in iter_files(args.base_dir) if p.suffix == ".flac"]
 
-    files = [p for p in iter_files(base) if p.suffix == ".flac"]
-
-    for fp in tqdm(files, desc="Processing FLAC files", unit="file"):
-        print(f"\nProcessing: {fp.name}")
-        title, artist = get_track_info(fp)
-
-        if not title:
-            print(f"  Warning: TITLE tag is empty, using filename as title")
-            title = fp.stem
-            artist = "UNKNOWN ARTIST"
-
-        new_file_name = sanitize_filename(f"{title} - {artist}") + ".flac"
-        if new_file_name != fp.name:
-            rename_file(fp, new_file_name)
-            fp = fp.with_name(new_file_name)
-
-        issues = get_audio_issues(fp)
-        print(f"  Stats: {issues['sample_rate']}Hz, {issues['bits_per_sample']}-bit, blocksize={issues['max_blocksize']}")
-
-        if issues["needs_sample_rate_fix"] or issues["needs_bitdepth_fix"]:
-            reasons = []
-            if issues["needs_sample_rate_fix"]:
-                reasons.append(f"sample rate {issues['sample_rate']}Hz -> 192000Hz")
-            if issues["needs_bitdepth_fix"]:
-                reasons.append(f"bit depth {issues['bits_per_sample']}-bit -> 24-bit")
-            print(f"  Fixing via ffmpeg: {', '.join(reasons)}")
-            fp = fix_with_ffmpeg(fp, issues["needs_sample_rate_fix"], issues["needs_bitdepth_fix"])
-
-            post_info = FLAC(str(fp)).info
-            if getattr(post_info, "max_blocksize", 4096) != 4096:
-                issues["needs_blocksize_fix"] = True
-
-        if issues["needs_blocksize_fix"]:
-            print(f"  Fixing blocksize -> 4096 via flac CLI")
-            fp = fix_blocksize(fp)
-
-        print("  Resizing album art to 500x500")
-        resize_album_art(fp)
-
-        if args.nolrc:
-            continue
-
-        if not title or not artist:
-            print(f"  Skipping LRC for {fp.name} (missing title or artist tag)")
-            continue
-
-        lrc_path = fp.with_suffix(".lrc")
-        if lrc_path.exists():
-            print(f"  Skipping LRC for {fp.name} (already exists)")
-            continue
-
-        print(f"  Fetching LRC for: {title} - {artist}")
-        lrc = syncedlyrics.search(f"{title} {artist}", providers=["Lrclib", "Megalobiz", "NetEase"])
-
-        with open(lrc_path, "w", encoding="utf-8") as f:
-            f.write(lrc if lrc else "")
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = {executor.submit(process_file, fp, args.nolrc): fp for fp in files}
+        with tqdm(total=len(files), desc="Processing FLAC files", unit="file") as pbar:
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    tqdm.write(result)
+                except Exception as e:
+                    fp = futures[future]
+                    tqdm.write(f"\n  ERROR processing {fp.name}: {e}")
+                finally:
+                    pbar.update(1)
 
 
 if __name__ == "__main__":

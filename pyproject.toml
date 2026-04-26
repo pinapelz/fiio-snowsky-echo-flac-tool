@@ -5,6 +5,7 @@ description = "Media tool for retagging FLACs for Snowsky Echo/Mini"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "ffmpeg-normalize>=1.37.6",
     "ffmpeg-python>=0.2.0",
     "mutagen>=1.47.0",
     "pillow>=12.2.0",
