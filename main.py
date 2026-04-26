@@ -192,7 +192,7 @@ def process_file(fp: Path, nolrc: bool) -> str:
     log(f"  Fetching LRC for: {title} - {artist}")
     with _lyrics_semaphore:
         lrc = syncedlyrics.search(f"{title} {artist}", providers=["Lrclib", "Megalobiz", "NetEase"])
-        time.sleep(0.5)
+        time.sleep(0.3)
 
     with open(lrc_path, "w", encoding="utf-8") as f:
         f.write(lrc if lrc else "")

@@ -7,7 +7,9 @@ The script does the following:
 - Re-encodes files with block size higher than 4096 via `flac` CLI
 - Rename FLAC file to `TRACK_NAME - ARTIST.flac`
 - Resize album art to 500x500px
+- Normalize all audio to -14 LUFS
 - Download LRC file
+  - A delay of 0.3 sec is hardcoded to avoid rate limit, this is a hard limit across all threads (if running multithreaded)
 
 # External Dependencies
 You need the FLAC command line tool to be accessible globally, meaning it must be able to run anywhere on your machine. Using the official tool was the most consistent way of fixing the block-size issue cross-platform.
@@ -20,5 +22,7 @@ https://xiph.org/flac/download.html
 
 ```bash
 uv sync
-uv run main.py <base_dir> [--nolrc]
+uv run main.py <base_dir> [--nolrc] [-n num_threads]
 ```
+
+Example: `uv run main.py <DIR_WITH_MUSIC>`
