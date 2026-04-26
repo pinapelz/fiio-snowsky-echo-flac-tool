@@ -10,7 +10,7 @@ import syncedlyrics
 from mutagen.flac import FLAC
 import ffmpeg
 
-_lyrics_semaphore = threading.Semaphore(1)
+_lyrics_semaphore = threading.Semaphore(3)
 
 
 def iter_files(base: Path) -> Iterator[Path]:
