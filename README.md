@@ -26,3 +26,6 @@ uv run main.py <base_dir> [--nolrc] [-n num_threads]
 ```
 
 Example: `uv run main.py <DIR_WITH_MUSIC>`
+
+# Other Tools
+`apply_album_art.sh` - Recursively traverse all folders, automatically apply album art and resize to all FLACs that have a JPG/PNG in the same directory
