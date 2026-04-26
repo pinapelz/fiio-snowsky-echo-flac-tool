@@ -12,6 +12,9 @@ import ffmpeg
 
 _lyrics_semaphore = threading.Semaphore(3)
 
+_claimed_names: set[Path] = set()
+_claimed_names_lock = threading.Lock()
+
 
 def iter_files(base: Path) -> Iterator[Path]:
     iterator = base.rglob("*")
@@ -141,15 +144,20 @@ def process_file(fp: Path, nolrc: bool) -> str:
         artist = "UNKNOWN ARTIST"
 
     new_stem = sanitize_filename(f"{title} - {artist}")
-    target = fp.with_name(new_stem + ".flac")
-    if target.exists() and target.resolve() != fp.resolve():
-        if album:
-            log(f"  Conflict detected, adding album name as differentiator")
-            new_stem = sanitize_filename(f"{title} - {artist} ({album})")
-        else:
-            log(f"  Warning: filename conflict but no album tag, keeping original name")
-            new_stem = fp.stem
-    new_file_name = new_stem + ".flac"
+    with _claimed_names_lock:
+        target = fp.with_name(new_stem + ".flac")
+        conflict = (target.resolve() in _claimed_names) or (
+            target.exists() and target.resolve() != fp.resolve()
+        )
+        if conflict:
+            if album:
+                log(f"  Conflict detected, adding album name as differentiator")
+                new_stem = sanitize_filename(f"{title} - {artist} ({album})")
+            else:
+                log(f"  Warning: filename conflict but no album tag, keeping original name")
+                new_stem = fp.stem
+        new_file_name = new_stem + ".flac"
+        _claimed_names.add(fp.with_name(new_file_name).resolve())
     if new_file_name != fp.name:
         rename_file(fp, new_file_name)
         fp = fp.with_name(new_file_name)
