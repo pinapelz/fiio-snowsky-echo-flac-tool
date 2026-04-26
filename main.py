@@ -46,23 +46,22 @@ def get_audio_issues(path: Path) -> dict:
 
 
 def fix_with_ffmpeg(path: Path, fix_sample_rate: bool, fix_bitdepth: bool) -> Path:
-    output_kwargs = {
-        "acodec": "flac",
-        "map": "0:a",
-    }
+    args = [
+        "ffmpeg", "-y",
+        "-i", str(path),
+        "-map", "0:a",
+        "-map", "0:v?",
+        "-c:v", "copy",
+        "-acodec", "flac",
+    ]
     if fix_bitdepth:
-        output_kwargs["sample_fmt"] = "s24"
+        args += ["-sample_fmt", "s24"]
     if fix_sample_rate:
-        output_kwargs["ar"] = "192000"
+        args += ["-ar", "192000"]
 
     temp_path = path.with_suffix(".tmp.flac")
-    (
-        ffmpeg
-        .input(str(path))
-        .output(str(temp_path), **output_kwargs)
-        .overwrite_output()
-        .run(quiet=True)
-    )
+    args.append(str(temp_path))
+    subprocess.run(args, capture_output=True, text=True, check=True)
     path.unlink()
     temp_path.rename(path)
     return path
@@ -116,6 +115,7 @@ def normalize_loudness(path: Path, target_lufs: float = -14.0, target_tp: float 
             "-t", str(target_lufs),
             "--true-peak", str(target_tp),
             "-f",
+            "-e", "-map 0:v? -c:v copy",
         ],
         capture_output=True,
         text=True,
