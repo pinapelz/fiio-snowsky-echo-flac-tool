@@ -35,7 +35,7 @@ def get_audio_issues(path: Path) -> dict:
     return {
         "needs_sample_rate_fix": sample_rate > 192000,
         "needs_bitdepth_fix": bits_per_sample > 24,
-        "needs_blocksize_fix": max_blocksize != 4096,
+        "needs_blocksize_fix": max_blocksize > 4096,
         "sample_rate": sample_rate,
         "bits_per_sample": bits_per_sample,
         "max_blocksize": max_blocksize,
@@ -170,7 +170,7 @@ def process_file(fp: Path, nolrc: bool) -> str:
     fp = normalize_loudness(fp)
 
     post_blocksize = getattr(FLAC(str(fp)).info, "max_blocksize", 4096)
-    if post_blocksize != 4096:
+    if post_blocksize > 4096:
         log(f"  Fixing blocksize -> 4096 via flac CLI")
         fp = fix_blocksize(fp)
 
